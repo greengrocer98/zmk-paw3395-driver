@@ -19,6 +19,12 @@ config INPUT_PAW3395_INIT_PRIORITY
     int "PAW3395 initialization priority"
     default INPUT_INIT_PRIORITY
 
+config REPORT_CPI
+  bool "Enable CPI reporting feature"
+  default y
+  help
+    Enable this option to report CPI value for led indication.
+
 config PAW3395_SWAP_XY
   bool "Swap the X/Y axis of PAW3395 sensor"
 
