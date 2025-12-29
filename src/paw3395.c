@@ -17,6 +17,10 @@
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(paw3395, CONFIG_PAW3395_LOG_LEVEL);
 
+#if IS_ENABLED(CONFIG_SETTINGS)
+#include <zephyr/settings/settings.h>
+#endif
+
 //////// PAW3395 static library header
 #include "paw3395/include/paw3395.h"
 
@@ -71,8 +75,6 @@ static const int32_t async_init_delay[ASYNC_INIT_STEP_COUNT] = {
     [ASYNC_INIT_STEP_FW_LOAD_START] = 5,
     [ASYNC_INIT_STEP_CONFIGURE] = 1,
 };
-
-static uint8_t current_cpi_index = 0;
 
 static int paw3395_async_init_power_up(const struct device *dev);
 static int paw3395_async_init_fw_load(const struct device *dev);
@@ -186,14 +188,15 @@ static int paw3395_async_init_power_up(const struct device *dev)
 static int paw3395_async_init_configure(const struct device *dev)
 {
     int err = 0;
+    struct pixart_data *data = dev->data;
     const struct pixart_config *config = dev->config;
 
     err = paw3395_set_performance(dev, true);
 
-    err = paw3395_set_cpi(dev, 0);
+    uint8_t current_cpi_index = data->current_cpi_index;
+    err = paw3395_set_cpi(dev, current_cpi_index);
     if (err < 0)
     {
-        LOG_ERR("can't set cpi");
         return err;
     }
     LOG_INF("set cpi done");
@@ -405,14 +408,13 @@ static void paw3395_cpi_gpio_callback(const struct device *gpiob, struct gpio_ca
                                       uint32_t pins)
 {
     struct pixart_data *data = CONTAINER_OF(cb, struct pixart_data, cpi_gpio_cb);
-    const struct device *dev = data->dev;
-    const struct pixart_config *config = dev->config;
     k_work_reschedule(&data->set_cpi_work, K_MSEC(20));
 }
 
-static void paw3395_set_cpi_work_callback(struct k_work_delayable *work)
+static void paw3395_set_cpi_work_callback(struct k_work *work)
 {
-    struct pixart_data *data = CONTAINER_OF(work, struct pixart_data, set_cpi_work);
+    struct k_work_delayable *work_delayable = (struct k_work_delayable *)work;
+    struct pixart_data *data = CONTAINER_OF(work_delayable, struct pixart_data, set_cpi_work);
     const struct device *dev = data->dev;
     const struct pixart_config *config = dev->config;
     bool state = gpio_pin_get_dt(&config->cpi_gpio);
@@ -421,12 +423,36 @@ static void paw3395_set_cpi_work_callback(struct k_work_delayable *work)
         // ignore debounce low level
         return;
     }
+    if (unlikely(!data->ready))
+    {
+        LOG_DBG("Device is not initialized yet");
+        return;
+    }
+    int8_t current_cpi_index = data->current_cpi_index;
     int index = (current_cpi_index + 1) % config->cpi_count;
-    current_cpi_index = index;
     paw3395_set_cpi(dev, index);
+    data->current_cpi_index = index;
+#if IS_ENABLED(CONFIG_SETTINGS)
+    LOG_INF("save index %d", index);
+    k_work_reschedule(&data->save_work, K_MSEC(1000));
+#endif
 }
 
-static int paw3395_init_cpi(const struct device *dev)
+#if IS_ENABLED(CONFIG_SETTINGS)
+static void save_work_callback(struct k_work *work)
+{
+    struct k_work_delayable *work_delayable = k_work_delayable_from_work(work);
+    struct pixart_data *data = CONTAINER_OF(work_delayable, struct pixart_data, save_work);
+
+    int err = settings_save_one(data->settings_key, &data->current_cpi_index, sizeof(&data->current_cpi_index));
+    if (err < 0)
+    {
+        LOG_ERR("Failed to save settings %d", err);
+    }
+}
+#endif
+
+static int paw3395_init_cpi_gpio(const struct device *dev)
 {
     int err = 0;
     struct pixart_data *data = dev->data;
@@ -509,8 +535,13 @@ static int paw3395_init(const struct device *dev)
     // init set_cpi handler work
     k_work_init_delayable(&data->set_cpi_work, paw3395_set_cpi_work_callback);
 
+#if IS_ENABLED(CONFIG_SETTINGS)
+    // init set_cpi handler work
+    k_work_init_delayable(&data->save_work, save_work_callback);
+#endif
+
     // init cpi routine
-    err = paw3395_init_cpi(dev);
+    err = paw3395_init_cpi_gpio(dev);
     if (err)
     {
         return err;
@@ -547,8 +578,11 @@ static int paw3395_init(const struct device *dev)
 #define PAW3395_SPI_MODE (SPI_WORD_SET(8) | SPI_MODE_CPOL | SPI_MODE_CPHA | SPI_TRANSFER_MSB | \
                           SPI_OP_MODE_MASTER | SPI_HOLD_ON_CS | SPI_LOCK_ON)
 
+#if IS_ENABLED(CONFIG_SETTINGS)
 #define PAW3395_DEFINE(n)                                                           \
-    static struct pixart_data data##n;                                              \
+    static struct pixart_data data##n = {                                           \
+        .settings_key = SETTINGS_PREFIX "/" #n,                                     \
+    };                                                                              \
     static const struct pixart_config config##n = {                                 \
         .spi = SPI_DT_SPEC_INST_GET(n, PAW3395_SPI_MODE, 0),                        \
         .irq_gpio = GPIO_DT_SPEC_INST_GET(n, irq_gpios),                            \
@@ -565,6 +599,25 @@ static int paw3395_init(const struct device *dev)
     };                                                                              \
     DEVICE_DT_INST_DEFINE(n, paw3395_init, NULL, &data##n, &config##n, POST_KERNEL, \
                           CONFIG_INPUT_PAW3395_INIT_PRIORITY, NULL);
+#else
+#define PAW3395_DEFINE(n)                                                           \
+    static const struct pixart_config config##n = {                                 \
+        .spi = SPI_DT_SPEC_INST_GET(n, PAW3395_SPI_MODE, 0),                        \
+        .irq_gpio = GPIO_DT_SPEC_INST_GET(n, irq_gpios),                            \
+        .cpi_gpio = GPIO_DT_SPEC_INST_GET(n, cpi_gpios),                            \
+        .cpi = DT_PROP(DT_DRV_INST(n), cpi),                                        \
+        .cpi_count = DT_PROP_LEN(DT_DRV_INST(n), cpi),                              \
+        .swap_xy = DT_PROP(DT_DRV_INST(n), swap_xy),                                \
+        .inv_x = DT_PROP(DT_DRV_INST(n), invert_x),                                 \
+        .inv_y = DT_PROP(DT_DRV_INST(n), invert_y),                                 \
+        .evt_type = DT_PROP(DT_DRV_INST(n), evt_type),                              \
+        .x_input_code = DT_PROP(DT_DRV_INST(n), x_input_code),                      \
+        .y_input_code = DT_PROP(DT_DRV_INST(n), y_input_code),                      \
+        .force_awake = DT_PROP(DT_DRV_INST(n), force_awake),                        \
+    };                                                                              \
+    DEVICE_DT_INST_DEFINE(n, paw3395_init, NULL, &data##n, &config##n, POST_KERNEL, \
+                          CONFIG_INPUT_PAW3395_INIT_PRIORITY, NULL);
+#endif
 
 DT_INST_FOREACH_STATUS_OKAY(PAW3395_DEFINE)
 
@@ -594,3 +647,53 @@ static int on_activity_state(const zmk_event_t *eh)
 
 ZMK_LISTENER(zmk_paw3395_idle_sleeper, on_activity_state);
 ZMK_SUBSCRIPTION(zmk_paw3395_idle_sleeper, zmk_activity_state_changed);
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+#define SETTINGS_INST(n)     \
+    case n:                  \
+    {                        \
+        data = &data##n;     \
+        config = &config##n; \
+        break;               \
+    }
+
+// This is called once at startup when we have read our settings
+static int cpi_settings_load_cb(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg)
+{
+    struct pixart_data *data = NULL;
+    struct pixart_config *config = NULL;
+    char *endptr;
+    long identifier = strtol(name, &endptr, 10);
+    int err = 0;
+
+    if (endptr == name)
+    {
+        return -ENOENT;
+    }
+
+    // The identifier is the instance index, this switch statement initializes our data and config pointers
+    // to point at the right structures.
+    switch (identifier)
+    {
+        DT_INST_FOREACH_STATUS_OKAY(SETTINGS_INST)
+    default:
+        return -ENOENT;
+    }
+
+    err = read_cb(cb_arg, &data->current_cpi_index, sizeof(&data->current_cpi_index));
+    if (err >= 0)
+    {
+        if (data->current_cpi_index >= config->cpi_count)
+        {
+            data->current_cpi_index = 0;
+        }
+    }
+    else
+    {
+        LOG_ERR("Failed to load settings %d", err);
+    }
+
+    return MIN(err, 0);
+}
+SETTINGS_STATIC_HANDLER_DEFINE(paw3395, SETTINGS_PREFIX, NULL, cpi_settings_load_cb, NULL, NULL);
+#endif

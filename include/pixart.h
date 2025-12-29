@@ -16,6 +16,9 @@ extern "C"
 {
 #endif
 
+#define MAX_SETTINGS_LENGTH 16
+#define SETTINGS_PREFIX "cpi_cycle"
+
     /* device data structure */
     struct pixart_data
     {
@@ -27,6 +30,12 @@ extern "C"
 
         struct gpio_callback cpi_gpio_cb;     // cpi pin callback
         struct k_work_delayable set_cpi_work; // set cpi job
+        uint8_t current_cpi_index;
+
+#if IS_ENABLED(CONFIG_SETTINGS)
+        const char settings_key[MAX_SETTINGS_LENGTH];
+        struct k_work_delayable save_work;
+#endif
 
         struct k_work_delayable init_work; // the work structure for delayable init steps
         int async_init_step;
@@ -42,7 +51,6 @@ extern "C"
         struct gpio_dt_spec irq_gpio;
         struct gpio_dt_spec cpi_gpio;
         uint8_t cpi_count;
-        uint16_t cpi_index;
         bool swap_xy;
         bool inv_x;
         bool inv_y;
