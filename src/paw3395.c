@@ -188,18 +188,15 @@ static int paw3395_async_init_power_up(const struct device *dev)
 static int paw3395_async_init_configure(const struct device *dev)
 {
     int err = 0;
-    struct pixart_data *data = dev->data;
     const struct pixart_config *config = dev->config;
 
     err = paw3395_set_performance(dev, true);
 
-    uint8_t current_cpi_index = data->current_cpi_index;
-    err = paw3395_set_cpi(dev, current_cpi_index);
+    err = paw3395_lib_set_cpi(&config->spi, config->cpi[0]);
     if (err < 0)
     {
         return err;
     }
-    LOG_INF("set cpi done");
 
     bool swap_xy = config->swap_xy;
     bool inv_x = config->inv_x;
@@ -229,6 +226,7 @@ static void paw3395_async_init(struct k_work *work)
     struct k_work_delayable *work_delayable = (struct k_work_delayable *)work;
     struct pixart_data *data = CONTAINER_OF(work_delayable, struct pixart_data, init_work);
     const struct device *dev = data->dev;
+    const struct pixart_config *config = dev->config;
 
     LOG_INF("PAW3395 async init step %d", data->async_init_step);
 
@@ -236,6 +234,20 @@ static void paw3395_async_init(struct k_work *work)
     if (data->err)
     {
         LOG_ERR("PAW3395 initialization failed in step %d", data->async_init_step);
+        if (data->init_retry_attempts > 0)
+        {
+            data->init_retry_attempts--;
+            data->init_retry_count++;
+            LOG_WRN("PAW3395 retrying initialization (attempt %d/%d)",
+                    data->init_retry_count, config->init_retry_count);
+
+            data->async_init_step = ASYNC_INIT_STEP_POWER_UP;
+            k_work_schedule(&data->init_work, K_MSEC(config->init_retry_interval));
+        }
+        else
+        {
+            LOG_ERR("PAW3395 initialization failed after %d attempts", config->init_retry_count);
+        }
     }
     else
     {
@@ -245,6 +257,10 @@ static void paw3395_async_init(struct k_work *work)
         {
             data->ready = true; // sensor is ready to work
             LOG_INF("PAW3395 initialized");
+            if (data->init_retry_count > 0)
+            {
+                LOG_INF("PAW3395 initialization succeeded after %d retries", data->init_retry_count);
+            }
             paw3395_set_interrupt(dev, true);
         }
         else
@@ -264,6 +280,15 @@ static int paw3395_report_data(const struct device *dev)
     {
         LOG_WRN("Device is not initialized yet");
         return -EBUSY;
+    }
+
+    if (!data->ready)
+    {
+        if (++data->data_index >= CONFIG_PAW3395_IGNORE_FIRST_N)
+        {
+            data->ready = true;
+        }
+        return 0;
     }
 
     static int64_t dx = 0;
@@ -439,17 +464,20 @@ static void paw3395_set_cpi_work_callback(struct k_work *work)
 }
 
 #if IS_ENABLED(CONFIG_SETTINGS)
+
 static void save_work_callback(struct k_work *work)
 {
     struct k_work_delayable *work_delayable = k_work_delayable_from_work(work);
     struct pixart_data *data = CONTAINER_OF(work_delayable, struct pixart_data, save_work);
 
-    int err = settings_save_one(data->settings_key, &data->current_cpi_index, sizeof(&data->current_cpi_index));
+    LOG_INF("key is %s", data->settings_key);
+    int err = settings_save_one(data->settings_key, &data->current_cpi_index, sizeof(data->current_cpi_index));
     if (err < 0)
     {
         LOG_ERR("Failed to save settings %d", err);
     }
 }
+
 #endif
 
 static int paw3395_init_cpi_gpio(const struct device *dev)
@@ -512,6 +540,10 @@ static int paw3395_init(const struct device *dev)
         return -ENODEV;
     }
 
+#if IS_ENABLED(CONFIG_SETTINGS)
+    k_work_init_delayable(&data->save_work, save_work_callback);
+#endif
+
     err = gpio_pin_configure_dt(&cs_gpio, GPIO_OUTPUT_INACTIVE);
     if (err)
     {
@@ -534,11 +566,6 @@ static int paw3395_init(const struct device *dev)
 
     // init set_cpi handler work
     k_work_init_delayable(&data->set_cpi_work, paw3395_set_cpi_work_callback);
-
-#if IS_ENABLED(CONFIG_SETTINGS)
-    // init set_cpi handler work
-    k_work_init_delayable(&data->save_work, save_work_callback);
-#endif
 
     // init cpi routine
     err = paw3395_init_cpi_gpio(dev);
@@ -582,6 +609,7 @@ static int paw3395_init(const struct device *dev)
 #define PAW3395_DEFINE(n)                                                           \
     static struct pixart_data data##n = {                                           \
         .settings_key = SETTINGS_PREFIX "/" #n,                                     \
+        .init_retry_attempts = DT_PROP(DT_DRV_INST(n), init_retry_count),           \
     };                                                                              \
     static const struct pixart_config config##n = {                                 \
         .spi = SPI_DT_SPEC_INST_GET(n, PAW3395_SPI_MODE, 0),                        \
@@ -596,11 +624,16 @@ static int paw3395_init(const struct device *dev)
         .x_input_code = DT_PROP(DT_DRV_INST(n), x_input_code),                      \
         .y_input_code = DT_PROP(DT_DRV_INST(n), y_input_code),                      \
         .force_awake = DT_PROP(DT_DRV_INST(n), force_awake),                        \
+        .init_retry_count = DT_PROP(DT_DRV_INST(n), init_retry_count),              \
+        .init_retry_interval = DT_PROP(DT_DRV_INST(n), init_retry_interval),        \
     };                                                                              \
     DEVICE_DT_INST_DEFINE(n, paw3395_init, NULL, &data##n, &config##n, POST_KERNEL, \
                           CONFIG_INPUT_PAW3395_INIT_PRIORITY, NULL);
 #else
 #define PAW3395_DEFINE(n)                                                           \
+    static struct pixart_data data##n = {                                           \
+        .init_retry_attempts = DT_PROP(DT_DRV_INST(n), init_retry_count),           \
+    };                                                                              \
     static const struct pixart_config config##n = {                                 \
         .spi = SPI_DT_SPEC_INST_GET(n, PAW3395_SPI_MODE, 0),                        \
         .irq_gpio = GPIO_DT_SPEC_INST_GET(n, irq_gpios),                            \
@@ -614,6 +647,8 @@ static int paw3395_init(const struct device *dev)
         .x_input_code = DT_PROP(DT_DRV_INST(n), x_input_code),                      \
         .y_input_code = DT_PROP(DT_DRV_INST(n), y_input_code),                      \
         .force_awake = DT_PROP(DT_DRV_INST(n), force_awake),                        \
+        .init_retry_count = DT_PROP(DT_DRV_INST(n), init_retry_count),              \
+        .init_retry_interval = DT_PROP(DT_DRV_INST(n), init_retry_interval),        \
     };                                                                              \
     DEVICE_DT_INST_DEFINE(n, paw3395_init, NULL, &data##n, &config##n, POST_KERNEL, \
                           CONFIG_INPUT_PAW3395_INIT_PRIORITY, NULL);
@@ -661,7 +696,7 @@ ZMK_SUBSCRIPTION(zmk_paw3395_idle_sleeper, zmk_activity_state_changed);
 static int cpi_settings_load_cb(const char *name, size_t len, settings_read_cb read_cb, void *cb_arg)
 {
     struct pixart_data *data = NULL;
-    struct pixart_config *config = NULL;
+    const struct pixart_config *config = NULL;
     char *endptr;
     long identifier = strtol(name, &endptr, 10);
     int err = 0;
@@ -669,6 +704,11 @@ static int cpi_settings_load_cb(const char *name, size_t len, settings_read_cb r
     if (endptr == name)
     {
         return -ENOENT;
+    }
+
+    if (len != sizeof(data->current_cpi_index))
+    {
+        return -EINVAL;
     }
 
     // The identifier is the instance index, this switch statement initializes our data and config pointers
@@ -680,7 +720,7 @@ static int cpi_settings_load_cb(const char *name, size_t len, settings_read_cb r
         return -ENOENT;
     }
 
-    err = read_cb(cb_arg, &data->current_cpi_index, sizeof(&data->current_cpi_index));
+    err = read_cb(cb_arg, &data->current_cpi_index, sizeof(data->current_cpi_index));
     if (err >= 0)
     {
         if (data->current_cpi_index >= config->cpi_count)
@@ -693,7 +733,23 @@ static int cpi_settings_load_cb(const char *name, size_t len, settings_read_cb r
         LOG_ERR("Failed to load settings %d", err);
     }
 
-    return MIN(err, 0);
+    return err;
 }
-SETTINGS_STATIC_HANDLER_DEFINE(paw3395, SETTINGS_PREFIX, NULL, cpi_settings_load_cb, NULL, NULL);
+
+static void paw3395_apply_settings_cpi(const struct device *dev)
+{
+    struct pixart_data *data = dev->data;
+    paw3395_set_cpi(dev, data->current_cpi_index);
+}
+
+static int paw3395_settings_commit(void)
+{
+    #define APPLY(inst) paw3395_apply_settings_cpi(DEVICE_DT_INST_GET(inst));
+    DT_INST_FOREACH_STATUS_OKAY(APPLY)
+    #undef APPLY
+
+    return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(cpi_cycle, SETTINGS_PREFIX, NULL, cpi_settings_load_cb, paw3395_settings_commit, NULL);
 #endif

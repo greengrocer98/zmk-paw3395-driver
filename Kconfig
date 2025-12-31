@@ -7,6 +7,7 @@
 
 menuconfig PAW3395
   bool "PAW3395 mouse optical sensor"
+  imply SETTINGS
   select SPI
   depends on INPUT
   depends on DT_HAS_PIXART_PAW3395_ENABLED
@@ -24,6 +25,12 @@ config REPORT_CPI
   default y
   help
     Enable this option to report CPI value for led indication.
+    
+config PAW3395_IGNORE_FIRST_N
+  int "Ignore first N data points"
+  default 8
+  help
+    Ignore first N data points after initialization to prevent cursor jump.
 
 config PAW3395_SWAP_XY
   bool "Swap the X/Y axis of PAW3395 sensor"

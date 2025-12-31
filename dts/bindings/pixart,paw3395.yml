@@ -33,3 +33,11 @@ properties:
     required: true
   force-awake:
     type: boolean
+  init-retry-count:
+    type: int
+    default: 5
+    description: "Number of retries for initialization"
+  init-retry-interval:
+    type: int
+    default: 100
+    description: "Interval between initialization retries in ms"

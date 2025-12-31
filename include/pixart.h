@@ -39,6 +39,10 @@ extern "C"
 
         struct k_work_delayable init_work; // the work structure for delayable init steps
         int async_init_step;
+        
+        uint8_t init_retry_attempts;
+        uint8_t init_retry_count;
+        uint8_t data_index;
 
         bool ready; // whether init is finished successfully
         int err;    // error code during async init
@@ -58,6 +62,8 @@ extern "C"
         uint8_t x_input_code;
         uint8_t y_input_code;
         bool force_awake;
+        uint8_t init_retry_count;
+        uint16_t init_retry_interval;
         uint16_t cpi[];
     };
 
