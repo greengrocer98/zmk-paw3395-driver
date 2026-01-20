@@ -9,12 +9,9 @@ properties:
   irq-gpios:
     type: phandle-array
     required: true
-  cpi-gpios:
-    type: phandle-array
-    required: true
   cpi:
-    type: array
-    default: [600, 1200, 2400, 3200]
+    type: int
+    default: 600
     description: "CPI value (Range: 50 - 26000, Step: 50)"
   swap-xy:
     type: boolean
@@ -31,6 +28,14 @@ properties:
   y-input-code:
     type: int
     required: true
+  power-mode:
+    type: int
+    default: 0
+    description: |
+      Power mode
+      0: High power
+      1: Low power
+      2: Office
   force-awake:
     type: boolean
   init-retry-count:

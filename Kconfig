@@ -20,18 +20,12 @@ config INPUT_PAW3395_INIT_PRIORITY
     int "PAW3395 initialization priority"
     default INPUT_INIT_PRIORITY
 
-config REPORT_CPI
-  bool "Enable CPI reporting feature"
+config REPORT_ATTR
+  bool "Enable attribute reporting feature"
   default y
   help
-    Enable this option to report CPI value for led indication.
+    Enable this option to report attribute value for led indication.
     
-config PAW3395_IGNORE_FIRST_N
-  int "Ignore first N data points"
-  default 8
-  help
-    Ignore first N data points after initialization to prevent cursor jump.
-
 config PAW3395_SWAP_XY
   bool "Swap the X/Y axis of PAW3395 sensor"
 
@@ -47,6 +41,16 @@ config PAW3395_INIT_POWER_UP_EXTRA_DELAY_MS
   help
     Default minimum init power up delay is 10ms.
     Use this config to postpone init power up sequence if needs longer bootup time.
+
+config PAW3395_IGNORE_FIRST_N
+  int "Ignore first N data points"
+  default 8
+  help
+    Ignore first N data points after initialization to prevent cursor jump.
+
+config PAW3395_CALIBRATION_TIMEOUT_MS
+  int "Manual calibration timeout"
+  default 10000
 
 config PAW3395_REPORT_INTERVAL_MIN
 	int "PAW3395's default minimum report rate"

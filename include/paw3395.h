@@ -22,7 +22,22 @@ enum paw3395_attribute {
 	/** Sensor CPI for both X and Y axes. */
 	PAW3395_ATTR_CPI,
 
+	/** Sensor power mode. */
+	PAW3395_ATTR_POWER_MODE,
+
+	/** Sensor calibration. */
+	PAW3395_ATTR_CALIBRATE,
+
 };
+
+#if IS_ENABLED(CONFIG_REPORT_ATTR)
+struct paw3395_attr
+{
+    uint32_t attr;
+    uint32_t val;
+	int ret;
+};
+#endif // CONFIG_REPORT_CPI
 
 #ifdef __cplusplus
 }
