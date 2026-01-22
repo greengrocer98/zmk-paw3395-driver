@@ -195,7 +195,7 @@ static int paw3395_async_init_configure(const struct device *dev) {
     }
     LOG_INF("set asix done");
 
-    // err = paw3395_lib_set_mode(&config->spi, config->power_mode);
+    err = paw3395_lib_set_mode(&config->spi, config->power_mode);
     if (err < 0) {
         LOG_ERR("can't set power mode");
         return err;
@@ -455,7 +455,7 @@ static int paw3395_attr_set(const struct device *dev, enum sensor_channel chan,
         err = paw3395_lib_set_cpi(&config->spi, PAW3395_SVALUE_TO_CPI(*val));
         break;
     case PAW3395_ATTR_POWER_MODE:
-        // err = paw3395_lib_set_mode(&config->spi, val->val1);
+        err = paw3395_lib_set_mode(&config->spi, val->val1);
         break;
     case PAW3395_ATTR_CALIBRATE:
         // doesn't work so commented for now

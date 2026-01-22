@@ -16,7 +16,6 @@
 #include <zephyr/drivers/spi.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/sensor.h>
-#include "dt-bindings/zmk/paw3395-dt.h"
 
 /* Register count used for reading a single motion burst */
 #define PAW3395_BURST_SIZE 6
@@ -24,6 +23,12 @@
 /* Position of X in motion burst data */
 #define PAW3395_DX_POS 2
 #define PAW3395_DY_POS 4
+
+static enum paw3395_mode {
+    PAW3395_MODE_HIGH_PERFORMANCE = 0x00,
+    PAW3395_MODE_LOW_POWER = 0x01,
+    PAW3395_MODE_OFFICE = 0x02,
+};
 
 int paw3395_lib_power_up_reset(const struct spi_dt_spec *spi);
 int paw3395_lib_verify_product_id(const struct spi_dt_spec *spi);
@@ -33,8 +38,8 @@ int paw3395_lib_motion_burst_read(const struct spi_dt_spec *spi, uint8_t *buf, s
 int paw3395_lib_set_cpi(const struct spi_dt_spec *spi, uint32_t cpi);
 int paw3395_lib_set_axis(const struct spi_dt_spec *spi, bool swap_xy, bool inv_x, bool inv_y);
 int paw3395_lib_set_performance(const struct spi_dt_spec *spi, bool enable);
-// int paw3395_lib_set_mode(const struct spi_dt_spec *spi, enum paw3395_mode mode);
-// int paw3395_lib_calibrate(const struct spi_dt_spec *spi, uint32_t timeout_ms);
+int paw3395_lib_set_mode(const struct spi_dt_spec *spi, enum paw3395_mode mode);
+int paw3395_lib_calibrate(const struct spi_dt_spec *spi, uint32_t timeout_ms);
 
 // weak linked reference logger
 extern void paw3395_lib_log_err(const char *fmt, ...);
